@@ -103,11 +103,9 @@ elif st.session_state.stage == "verify":
 
     conf_audio = st.audio_input("🎤 Speak Confirmation", key="conf_mic")
     if conf_audio is not None:
-        with open("confirm.wav", "wb") as f: f.write(conf_audio.getvalue())
-        with st.spinner("🎙️ Listening..."):
-            _, _ = transcribe_audio("confirm.wav")
-            result = parse_confirmation(open("confirm.wav","r",encoding="utf-8").read() if os.path.exists("confirm.wav") else "")
-            # Fallback: transcribe real file for parsing
+        with open("confirm.wav", "wb") as f:
+            f.write(conf_audio.getvalue())
+        with st.spinner("Listening..."):
             raw_conf, _ = transcribe_audio("confirm.wav")
             parsed = parse_confirmation(raw_conf)
             
