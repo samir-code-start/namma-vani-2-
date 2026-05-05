@@ -74,56 +74,67 @@ if st.session_state.stage == "input_record":
 # STAGE: verify
 # ═══════════════════════════════════════════════════════════════════════════
 elif st.session_state.stage == "verify":
-    data = st.session_state.ai_data
-    if data is None:
-        st.error("No analysis data found. Returning to start.")
-        _reset()
-        st.rerun()
-
-    st.subheader("🔍 Verification")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Language", data.get("language", "—").upper())
-    col2.metric("Confidence", f"{data.get('confidence', 0) * 100:.0f}%")
-    sentiment = data.get("sentiment", "calm")
-    col3.markdown(f"**Sentiment:** {SENTIMENT_BADGES.get(sentiment, sentiment)}")
-
-    st.info(f"**AI Summary:** {data.get('normalized_issue', '—')}")
-    base_prompt = data.get("verification_prompt", "")
-    normalized_issue = data.get("normalized_issue", "")
-    appended_prompt = f"{base_prompt} I heard you say '{normalized_issue}'. Is this correct? Say Yes or No."
-    st.markdown(f"🗣️ *\"{appended_prompt}\"*")
-
-    # Auto-play TTS
-    tts_path = data.get("verify_tts_path", "verify.mp3")
-    if os.path.isfile(tts_path) and os.path.getsize(tts_path) > 0:
-        st.audio(tts_path, autoplay=True, format="audio/mpeg")
-    else:
-        st.caption("🔇 TTS audio unavailable.")
-
-    conf_audio = st.audio_input("🎤 Speak Confirmation", key="conf_mic")
-    if conf_audio is not None:
-        with open("confirm.wav", "wb") as f:
-            f.write(conf_audio.getvalue())
-        with st.spinner("Listening..."):
+    import time
+    data = st.session_state.ai_data or {}
+    lang = data.get("language", "en")
+    tts_path = data.get("verify_tts_path", "")
+    
+    # --- PHASE 1: Initial Verification (10s) ---
+    if "_ver_start" not in st.session_state:
+        st.session_state._ver_start = time.time()
+        st.session_state._ver_phase = 0
+        
+    elapsed_1 = time.time() - st.session_state._ver_start
+    
+    st.markdown(f"**AI Summary:** {data.get('normalized_issue', '—')}")
+    st.caption(f"🌐 `{lang.upper()}` | 📊 `{data.get('confidence', 0):.0%}`")
+    if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
+    
+    st.info("⏱️ Speak Yes/No or Haan/Sari/Sharangalya in any language:")
+    conf_audio = st.audio_input("🎤 Record Your Reply", key="mic_ver")
+    
+    if conf_audio:
+        with open("confirm.wav", "wb") as f: f.write(conf_audio.getvalue())
+        with st.spinner("🎙️ Processing..."):
             raw_conf, _ = transcribe_audio("confirm.wav")
             parsed = parse_confirmation(raw_conf)
-            
+        
         st.session_state.attempts += 1
         if parsed["intent"] == "confirmed":
             st.session_state.stage = "agent_ready"
+            st.success("✅ Verified! Routing to agent...")
             st.rerun()
         elif parsed["intent"] == "denied":
-            if st.session_state.attempts >= 2 or st.session_state.ai_data.get("handover", False):
+            if st.session_state.attempts >= 2 or data.get("handover", False):
                 st.session_state.stage = "handover"
+                st.error("🔄 Handover triggered. Connecting to agent...")
             else:
-                st.warning("⚠️ Please speak clearly again.")
+                st.warning("⚠️ Not understood. Try again.")
                 st.session_state.stage = "input_record"
             st.rerun()
         else:
             st.info(f"📝 AI heard: '{parsed['summary']}'")
-            st.warning("❓ Did you mean 'Yes' or 'No'?")
+            st.warning("❓ Did you mean Yes or No?")
             st.session_state.stage = "input_record"
+            st.rerun()
+            
+    if elapsed_1 >= 10:
+        st.session_state._ver_phase = 1
+        st.rerun()
+        
+    # --- PHASE 2: Smart Replay & Final Window (3s) ---
+    if st.session_state._ver_phase == 1:
+        if "_rep_start" not in st.session_state:
+            st.session_state._rep_start = time.time()
+            if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
+            st.info("🔊 Replaying: Do I understand your problem? Respond now.")
+        
+        elapsed_2 = time.time() - st.session_state._rep_start
+        st.caption(f"⏳ Final response window: {max(0, int(3 - elapsed_2))}s")
+        
+        if elapsed_2 >= 3:
+            st.warning("⏰ No further response detected. Transferring to human agent with available context...")
+            st.session_state.stage = "handover"
             st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
