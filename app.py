@@ -3,7 +3,7 @@
 import os
 import streamlit as st
 import pandas as pd
-from engine import process_audio, log_feedback, MOCK_MODE, FEEDBACK_FILE
+from engine import process_audio, log_feedback, MOCK_MODE, FEEDBACK_FILE, parse_confirmation, transcribe_audio
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -99,6 +99,9 @@ elif st.session_state.stage == "verify":
     NO_KEYWORDS = ["no", "ಇಲ್ಲ", "wrong", "ತಪ್ಪು", "nope", "ಬೇಡ"]
 
     def parse_yes_no(text: str):
+        parsed = parse_confirmation(text)
+        if parsed is not None:
+            return parsed
         text = text.lower().strip()
         if any(kw in text for kw in YES_KEYWORDS):
             return True
@@ -110,7 +113,24 @@ elif st.session_state.stage == "verify":
     if user_resp:
         is_yes = parse_yes_no(user_resp)
         if is_yes is True:
-            st.session_state.stage = "agent_ready"
+            st.session_state.stage = "handover" if data.get("handover", False) else "agent_ready"
+            st.rerun()
+        else:
+            st.session_state.stage = "decision"
+            st.rerun()
+
+    voice_resp = st.audio_input("Speak Yes or No", key="verify_voice_input")
+    if voice_resp is not None:
+        verify_path = "verify_response.wav"
+        with open(verify_path, "wb") as f:
+            f.write(voice_resp.getvalue())
+
+        with st.spinner("ðŸ”„ Verifying your responseâ€¦"):
+            verify_text, _ = transcribe_audio(verify_path)
+            is_yes = parse_confirmation(verify_text)
+
+        if is_yes is True:
+            st.session_state.stage = "handover" if data.get("handover", False) else "agent_ready"
             st.rerun()
         else:
             st.session_state.stage = "decision"

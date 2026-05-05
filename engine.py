@@ -1,4 +1,4 @@
-﻿"""engine.py â€” Namma Vanni AI pipeline: STT, LLM analysis, TTS, feedback logging, mock mode."""
+"""engine.py â€” Namma Vanni AI pipeline: STT, LLM analysis, TTS, feedback logging, mock mode."""
 
 import asyncio
 import csv
@@ -24,7 +24,7 @@ MOCK_MODE: bool = os.getenv("MOCK_MODE", "False").lower() == "true"
 GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
 
 SARVAM_API_KEY = "sk_5o334a0d_2rh4kcqytkfCtDXgGDWOMyCT"
-SARVAM_URL = "https://api.sarvam.ai/transcription-result/kannada-english-hindi-realtime/v1"
+SARVAM_URL = "https://api.sarvam.ai/transcription/kannada-english-hindi/v1"
 
 LLM_MODEL = "llama-3.3-70b-versatile"
 
@@ -95,8 +95,8 @@ OUTPUT STRICT JSON ONLY:
 }
 
 GUARDRAILS:
-- If confidence < 0.6 AND sentiment in [distressed, angry] â†’ handover=true
-- If confidence < 0.4 â†’ force handover=true regardless of sentiment
+- If confidence < 0.7 â†’ handover=true
+- If sentiment in [distressed, angry] â†’ handover=true
 - Normalized_issue must never contain placeholders like "unclear" or "pending". Use factual framing: "Caller reports [issue], needs [department/action]."
 - Never hallucinate departments. Stick to reported facts."""
 
@@ -180,11 +180,11 @@ def _enforce_guardrails(data: dict) -> dict:
 
     handover: bool = bool(data.get("handover", False))
     # Enforce handover logic:
-    # 1. true if confidence < 0.4
-    # 2. true if distressed/angry AND confidence < 0.6
-    if confidence < 0.4:
+    # 1. true if confidence < 0.7
+    # 2. true if distressed/angry
+    if confidence < 0.7:
         handover = True
-    elif (sentiment in {"distressed", "angry"} and confidence < 0.6) or normalized_issue == "Unclear report. Needs agent clarification.":
+    elif sentiment in {"distressed", "angry"} or normalized_issue == "Unclear report. Needs agent clarification.":
         handover = True
 
     return {
@@ -215,39 +215,63 @@ def normalize_kannada(text: str) -> str:
     return text
 
 
-def transcribe_audio(audio_path: str) -> Tuple[str, str]:
-    """Transcribe an audio file to text using Sarvam AI; returns mock transcript in MOCK_MODE."""
+def normalize_transcript(text: str, lang: str) -> str:
+    """Cross-language ASR drift correction for Kannada/Hindi/English."""
+    if not text: return ""
+    lang = lang.lower()[:2]
+    KN_FIXES = {"ನಮ್ವ":"ನಮ್ಮ", "ವಣಿ":"ವಾಣಿ", "ತುಂಬಾ":"ತುಂಬಾ", "ಹಾಳಾಗಿದೆ":"ಹಾಳಾಗಿದೆ", "ರಸ್ತೆ":"ರಸ್ತೆ", "ಪಾಣಿ":"ಪಾಣಿ", "ಕೇಂದ್ರ":"ಕೇಂದ್ರ", "ಫೋನ್":"ಫೋನ್", "ಬೇಕು":"ಬೇಕು", "ಸೇವೆ":"ಸೇವೆ"}
+    HI_FIXES = {"क्यो":"क्यों", "कहा":"कहाँ", "ठिक":"ठीक", "सही":"सही", "रस्ता":"रास्ता", "बात":"बात", "दिया":"दिया", "लिए":"लिए", "में":"में", "पानि":"पानी", "सफाय":"सफाई"}
+    EN_FIXES = {"teh":"the", "plz":"please", "thk":"thank", "recieve":"receive", "adress":"address", "wont":"won't", "cant":"can't", "im":"I'm", "waterline":"water line", "paniline":"pani line", "bandh kr do":"shut off"}
+    fixes = {"kn": KN_FIXES, "hi": HI_FIXES, "en": EN_FIXES}
+    current = fixes.get(lang, EN_FIXES)
+    out = text
+    for k, v in current.items(): out = out.replace(k, v)
+    return out.strip().replace("  ", " ").replace("\n", " ")
+
+
+def transcribe_audio(audio_path: str) -> tuple[str, str]:
+    """Layer 1: Sarvam AI -> Layer 2: Groq Whisper Fallback. Zero UI impact."""
     if MOCK_MODE:
-        logger.info("[MOCK] transcribe_audio() â†’ returning mock Kannada transcript.")
-        return normalize_kannada("à²¨à²®à³à²® à²Šà²°à²¿ à²°à²¸à³à²¤à³† à²¤à³à²‚à²¬à²¾ à²•à³†à²Ÿà³à²Ÿà²¿à²¦à³†, à²…à²§à²¿à²•à²¾à²°à²¿à²—à²³à²¨à³à²¨à³ à²•à²³à³à²¹à²¿à²¸à²¿"), "kn"
+        return normalize_transcript("ನಮ್ಮ ಊರಿ ರಸ್ತೆ ತುಂಬಾ ಕೆಟ್ಟಿದೆ, ಅಧಿಕಾರಿಗಳನ್ನು ಕಳುಹಿಸಿ", "kn"), "kn"
+
+    print(f"[STT] Checking: {audio_path}", flush=True)
+    if not os.path.isfile(audio_path) or os.path.getsize(audio_path) < 50:
+        print("[STT] EMPTY/MISSING FILE", flush=True)
+        return "", "en"
 
     try:
+        print("[STT] Provider 1: Sarvam AI", flush=True)
         with open(audio_path, "rb") as f:
-            response = requests.post(
-                SARVAM_URL,
-                files={"file": ("audio.wav", f, "audio/wav")},
-                headers={"subscription-key": SARVAM_API_KEY},
-                timeout=15
-            )
-            response.raise_for_status()
-            
-            data = response.json()
-            text = data.get("text", "").strip()
-            
-            detected_language = data.get("detected_language", "kn")
-            lang_prefix = detected_language[:2].lower()
-            if lang_prefix in ["kn", "hi", "en"]:
-                lang = lang_prefix
-            else:
-                lang = "kn"
-                
-            logger.info("STT complete. Characters: %d", len(text))
-            
-            final_text = normalize_kannada(text)
-            return final_text, lang
+            res = requests.post(SARVAM_URL, files={"file": ("audio.wav", f, "audio/wav")},
+                                headers={"subscription-key": SARVAM_API_KEY}, timeout=15)
+        res.raise_for_status()
+        payload = res.json()
+        data = payload.get("data") or payload
+        raw_text = (data.get("text") or data.get("transcript") or "").strip()
+        raw_lang = (data.get("detected_language") or data.get("language") or "kn-IN").split("-")[0][:2].lower()
+        lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
+        lang = lang_map.get(raw_lang, "kn")
+        clean = normalize_transcript(raw_text, lang)
+        print(f"[STT SARVAM OK] {raw_lang} | Len:{len(clean)}", flush=True)
+        return clean, lang
     except Exception as e:
-        print(f"[STT Error] {e}")
-        return "", "kn"
+        print(f"[STT SARVAM FAIL] {type(e).__name__}: {e}", flush=True)
+
+    try:
+        print("[STT] Provider 2: Groq Whisper API", flush=True)
+        client = _get_groq_client()
+        with open(audio_path, "rb") as f:
+            res = client.audio.transcriptions.create(model="whisper-large-v3", file=f, temperature=0.0)
+        raw_text = getattr(res, "text", "").strip().replace('\n', ' ')
+        raw_lang = getattr(res, "language", "en")[:2].lower()
+        lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
+        lang = lang_map.get(raw_lang, "en")
+        clean = normalize_transcript(raw_text, lang)
+        print(f"[STT GROQ OK] {raw_lang} | Len:{len(clean)}", flush=True)
+        return clean, lang
+    except Exception as e:
+        print(f"[STT FINAL FAIL] {type(e).__name__}: {e}", flush=True)
+        return "", "en"
 
 
 def extract_json(text: str) -> dict:
@@ -277,6 +301,7 @@ CRITICAL RULES:
     logging.info(f"[LLM INPUT] {text[:80]}{'...' if len(text)>80 else ''}")
     
     try:
+        client = _get_groq_client()
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -296,6 +321,7 @@ CRITICAL RULES:
         
         parsed["confidence"] = max(0.0, min(1.0, float(parsed["confidence"])))
         if parsed.get("language", "")[:2] not in ["kn", "hi", "en"]: parsed["language"] = "kn"
+        if parsed["confidence"] < 0.7 or parsed.get("sentiment") in ["distressed", "angry"]: parsed["handover"] = True
         return parsed
     except Exception as e:
         logging.error(f"[LLM FAIL] {e}")
