@@ -1,9 +1,17 @@
 """app.py — Namma Vanni Streamlit UI: Record → Verify → Confirm/Handover → Agent Dashboard."""
 
 import os
-import streamlit as st
 import pandas as pd
-from engine import process_audio, log_feedback, MOCK_MODE, FEEDBACK_FILE, parse_confirmation, transcribe_audio
+import streamlit as st
+
+from engine import (
+    MOCK_MODE,
+    FEEDBACK_FILE,
+    log_feedback,
+    parse_confirmation,
+    process_audio,
+    transcribe_audio,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -26,12 +34,10 @@ for key, val in _DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
-
 def _reset():
     """Reset session state to initial values."""
     for key, val in _DEFAULTS.items():
         st.session_state[key] = val
-
 
 # ---------------------------------------------------------------------------
 # Header
@@ -125,7 +131,7 @@ elif st.session_state.stage == "verify":
         with open(verify_path, "wb") as f:
             f.write(voice_resp.getvalue())
 
-        with st.spinner("ðŸ”„ Verifying your responseâ€¦"):
+        with st.spinner("🔄 Verifying your response…"):
             verify_text, _ = transcribe_audio(verify_path)
             is_yes = parse_confirmation(verify_text)
 
