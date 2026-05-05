@@ -73,69 +73,103 @@ if st.session_state.stage == "input_record":
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: verify
 # ═══════════════════════════════════════════════════════════════════════════
-elif st.session_state.stage == "verify":
-    import time
+import time
+if st.session_state.stage == "verify":
     data = st.session_state.ai_data or {}
     lang = data.get("language", "en")
     tts_path = data.get("verify_tts_path", "")
     
-    # --- PHASE 1: Initial Verification (10s) ---
+    # Initialize phase tracking once
     if "_ver_start" not in st.session_state:
         st.session_state._ver_start = time.time()
         st.session_state._ver_phase = 0
+        st.session_state._mic_initialized = False
         
     elapsed_1 = time.time() - st.session_state._ver_start
     
+    # Play AI verification summary
     st.markdown(f"**AI Summary:** {data.get('normalized_issue', '—')}")
     st.caption(f"🌐 `{lang.upper()}` | 📊 `{data.get('confidence', 0):.0%}`")
     if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
     
-    st.info("⏱️ Speak Yes/No or Haan/Sari/Sharangalya in any language:")
-    conf_audio = st.audio_input("🎤 Record Your Reply", key="mic_ver")
-    
-    if conf_audio:
-        with open("confirm.wav", "wb") as f: f.write(conf_audio.getvalue())
-        with st.spinner("🎙️ Processing..."):
-            raw_conf, _ = transcribe_audio("confirm.wav")
-            parsed = parse_confirmation(raw_conf)
-        
-        st.session_state.attempts += 1
-        if parsed["intent"] == "confirmed":
-            st.session_state.stage = "agent_ready"
-            st.success("✅ Verified! Routing to agent...")
+    # PHASE 0: Single-click mic initialization (browser security requirement)
+    if not st.session_state._mic_initialized:
+        st.warning("⚠️ Click ONCE to activate live microphone. Keep device close.")
+        if st.button("🎤 Activate Live Microphone", key="btn_init_mic", type="primary"):
+            st.session_state._mic_initialized = True
             st.rerun()
-        elif parsed["intent"] == "denied":
-            if st.session_state.attempts >= 2 or data.get("handover", False):
-                st.session_state.stage = "handover"
-                st.error("🔄 Handover triggered. Connecting to agent...")
-            else:
-                st.warning("⚠️ Not understood. Try again.")
-                st.session_state.stage = "input_record"
-            st.rerun()
-        else:
-            st.info(f"📝 AI heard: '{parsed['summary']}'")
-            st.warning("❓ Did you mean Yes or No?")
-            st.session_state.stage = "input_record"
-            st.rerun()
+    else:
+        # PHASE 1: Initial 10-second auto-listening window
+        if st.session_state._ver_phase == 0:
+            st.info("🔴 LISTENING... Speak Yes/No/Han/Sari/Illa now.")
+            conf_audio = st.audio_input("🎙️ Respond", key="mic_live", disabled=False)
             
-    if elapsed_1 >= 10:
-        st.session_state._ver_phase = 1
-        st.rerun()
-        
-    # --- PHASE 2: Smart Replay & Final Window (3s) ---
-    if st.session_state._ver_phase == 1:
-        if "_rep_start" not in st.session_state:
-            st.session_state._rep_start = time.time()
-            if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
-            st.info("🔊 Replaying: Do I understand your problem? Respond now.")
-        
-        elapsed_2 = time.time() - st.session_state._rep_start
-        st.caption(f"⏳ Final response window: {max(0, int(3 - elapsed_2))}s")
-        
-        if elapsed_2 >= 3:
-            st.warning("⏰ No further response detected. Transferring to human agent with available context...")
-            st.session_state.stage = "handover"
-            st.rerun()
+            if conf_audio:
+                with open("confirm.wav", "wb") as f: f.write(conf_audio.getvalue())
+                with st.spinner("Processing..."):
+                    raw_conf, _ = transcribe_audio("confirm.wav")
+                    parsed = parse_confirmation(raw_conf)
+                
+                st.session_state.attempts += 1
+                if parsed["intent"] == "confirmed":
+                    st.session_state.stage = "agent_ready"
+                    st.success("✅ Verified! Routing to agent...")
+                    st.rerun()
+                elif parsed["intent"] == "denied":
+                    if st.session_state.attempts >= 2 or data.get("handover", False):
+                        st.session_state.stage = "handover"
+                        st.error("🔄 Handover triggered. Connecting to agent...")
+                    else:
+                        st.warning("⚠️ Not understood. Try again.")
+                        st.session_state.stage = "input_record"
+                    st.rerun()
+                else:
+                    st.info(f"📝 AI heard: '{parsed['summary']}'")
+                    st.warning("❓ Did you mean Yes or No?")
+                    st.session_state.stage = "input_record"
+                    st.rerun()
+                    
+            if elapsed_1 >= 10:
+                st.session_state._ver_phase = 1
+                st.rerun()
+                
+        # PHASE 2: Auto-Replay TTS + Final 3-Second Safety Window
+        elif st.session_state._ver_phase == 1:
+            if "_rep_start" not in st.session_state:
+                st.session_state._rep_start = time.time()
+                st.info("🔊 Replay: Do I understand your problem? Reply now.")
+                if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
+                
+            elapsed_2 = time.time() - st.session_state._rep_start
+            st.caption(f"⏳ Final response window: {max(0, int(3 - elapsed_2))}s")
+            
+            conf_audio_2 = st.audio_input("🎙️ Final Response", key="mic_final", disabled=False)
+            if conf_audio_2:
+                with open("confirm_2.wav", "wb") as f: f.write(conf_audio_2.getvalue())
+                with st.spinner("Processing..."):
+                    raw_conf, _ = transcribe_audio("confirm_2.wav")
+                    parsed = parse_confirmation(raw_conf)
+                
+                st.session_state.attempts += 1
+                if parsed["intent"] == "confirmed":
+                    st.session_state.stage = "agent_ready"
+                    st.success("✅ Verified!")
+                    st.rerun()
+                elif parsed["intent"] == "denied":
+                    if st.session_state.attempts >= 2 or data.get("handover", False):
+                        st.session_state.stage = "handover"
+                        st.error("🔄 Handover triggered.")
+                    else:
+                        st.session_state.stage = "input_record"
+                    st.rerun()
+                else:
+                    st.session_state.stage = "input_record"
+                    st.rerun()
+                    
+            if elapsed_2 >= 3:
+                st.warning("⏰ No further response detected. Transferring to human agent with available context...")
+                st.session_state.stage = "handover"
+                st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: decision (transient — routes immediately)
