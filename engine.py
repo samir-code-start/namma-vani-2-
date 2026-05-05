@@ -174,22 +174,39 @@ async def _tts_coroutine(text: str, voice: str, output_path: str) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def parse_confirmation(transcript: str) -> bool | None:
-    """Multilingual yes/no detector for Kannada/Hindi/English + dialects."""
+def parse_confirmation(transcript: str) -> dict:
+    """Robustly parses multilingual yes/no & summarizes longer inputs."""
     t = transcript.strip().lower()
-    yes_tokens = {"yes","yeah","yep","correct","right","exactly","true","agreed","sounds right","okay","ok",
-                  "haan","han","hān","ji","theek","sahi","haa","haanji","bilkul","sahī hai",
-                  "sari","shari","saru","hana","hanna","sha","sharangalya","thikiddu","thike", "ಹೌದು", "ಸರಿ", "ಹಾ", "ಹಾಂ"}
-    no_tokens = {"no","nahi","nahin","naahi","galat","bhool","phir se","wapos","na",
-                 "not correct","wrong","incorrect","missed","repeat","again","try again","nope",
-                 "illa","illai","alla","daana","thappilla","muddu","kadliya","mukhyamaga kadaliya", "ಇಲ್ಲ", "ತಪ್ಪು", "ಬೇಡ"}
-    words = re.findall(r'\b\w+\b', t)
-    for w in words:
-        if any(y.startswith(w) or w.startswith(y) for y in yes_tokens): return True
-        if any(n.startswith(w) or w.startswith(n) for n in no_tokens): return False
-    if any(y in t for y in yes_tokens): return True
-    if any(n in t for n in no_tokens): return False
-    return None
+    if not t: return {"intent": "unclear", "summary": ""}
+    
+    # Multi-language affirmation/negation patterns
+    yes_tokens = ["yes","yeah","yep","correct","right","exactly","agreed","okay","ok",
+                  "haan","han","hān","ji","theek","sahi","haa","bilkul","sari","sha","hana"]
+    no_tokens = ["no","nahi","nahin","naahi","galat","bhool","phir se","wapos","na",
+                 "wrong","incorrect","missed","repeat","again","try again",
+                 "illa","illai","alla","muddu","kadliya","galti","bharosa nahi"]
+                
+    yes_hits = [w for w in yes_tokens if w in t]
+    no_hits = [w for w in no_tokens if w in t]
+    
+    if len(yes_hits) > 0 and len(no_hits) == 0:
+        return {"intent": "confirmed", "summary": t[:80]}
+    if len(no_hits) > 0 and len(yes_hits) == 0:
+        return {"intent": "denied", "summary": t[:80]}
+    if len(t) > 20 or (len(yes_hits) > 0 and len(no_hits) > 0):
+        # Longer/mixed input → route to quick LLM intent extraction
+        try:
+            client = _get_groq_client()
+            system = "You are a helpline assistant. Respond ONLY with JSON: {\"intent\":\"confirmed\"|\"denied\"|\"unclear\",\"summary\":\"one-line clarification of user's exact meaning\"}. Analyze this spoken reply:"
+            res = client.chat.completions.create(model="llama-3.3-70b-versatile",
+                messages=[{"role":"system","content":system},{"role":"user","content":t}],
+                temperature=0.1, max_tokens=80)
+            import re, json
+            m = re.search(r'\{.*\}', res.choices[0].message.content, re.DOTALL)
+            if m: return json.loads(m.group())
+        except: pass
+        return {"intent": "unclear", "summary": t[:80]}
+    return {"intent": "unclear", "summary": t[:80]}
 
 def normalize_kannada(text: str) -> str:
     """Normalize Kannada text using KANADA_FIXES."""
@@ -211,48 +228,51 @@ def normalize_transcript(text: str, lang: str) -> str:
     return out.strip().replace("  ", " ").replace("\n", " ")
 
 def transcribe_audio(audio_path: str) -> tuple[str, str]:
-    """Layer 1: Sarvam AI -> Layer 2: Groq Whisper Fallback."""
-    if MOCK_MODE:
-        return normalize_transcript(_MOCK_TRANSCRIPT, "kn"), "kn"
-
+    """Layer 1: Sarvam → Layer 2: Groq. Forces Indic language routing."""
+    if os.getenv("MOCK_MODE", "").lower() == "true":
+        return normalize_transcript("ನಮ್ಮ ಊರಿ ರಸ್ತೆ ತುಂಬಾ ಕೆಟ್ಟಿದೆ, ಅಧಿಕಾರಿಗಳನ್ನು ಕಳುಹಿಸಿ", "kn"), "kn"
+    
     print(f"[STT] Checking: {audio_path}", flush=True)
     if not os.path.isfile(audio_path) or os.path.getsize(audio_path) < 50:
-        print("[STT SARVAM SKIP] EMPTY/MISSING FILE", flush=True)
         return "", "en"
-
+        
+    # ── LAYER 1: SARVAM ──
     try:
-        print("[STT] Provider 1: Sarvam AI", flush=True)
-        headers = {"subscription-key": os.getenv("SARVAM_API_KEY", "")}
+        import requests
         with open(audio_path, "rb") as f:
-            res = requests.post(SARVAM_URL, files={"file": ("audio.wav", f, "audio/wav")},
-                                headers=headers, timeout=15)
+            res = requests.post("https://api.sarvam.ai/transcription/kannada-english-hindi/v1",
+                                files={"file": ("audio.wav", f, "audio/wav")},
+                                headers={"subscription-key": os.getenv("SARVAM_API_KEY")}, timeout=15)
         res.raise_for_status()
-        payload = res.json()
-        data = payload.get("data") or payload
+        data = res.json().get("data") or res.json()
         raw_text = (data.get("text") or data.get("transcript") or "").strip()
-        raw_lang = (data.get("detected_language") or data.get("language") or "kn-IN").split("-")[0][:2].lower()
+        raw_lang = (data.get("detected_language") or data.get("language") or "kn-IN").split("-")[0][:2]
+        
+        # Force correct language if Unicode Indic detected
+        if any(ord(c) > 127 for c in raw_text):
+            raw_lang = "kn" if any(chr(2400) <= ord(c) <= chr(2815) for c in raw_text) else "hi"
+            
+        clean = normalize_transcript(raw_text, raw_lang)
         lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
-        lang = lang_map.get(raw_lang, "kn")
-        clean = normalize_transcript(raw_text, lang)
-        print(f"[STT SARVAM OK] {lang} | Len:{len(clean)}", flush=True)
-        return clean, lang
+        print(f"[STT SARVAM OK] {raw_lang} → {lang_map.get(raw_lang,'kn')} | Len:{len(clean)}", flush=True)
+        return clean, lang_map.get(raw_lang, "kn")
     except Exception as e:
-        print(f"[STT SARVAM FAIL] {type(e).__name__}: {e}", flush=True)
-
+        print(f"[STT SARVAM SKIP] {type(e).__name__}: {e}", flush=True)
+        
+    # ── LAYER 2: GROQ ──
     try:
-        print("[STT] Provider 2: Groq Whisper API", flush=True)
-        client = _get_groq_client()
+        g_client = _get_groq_client()
         with open(audio_path, "rb") as f:
-            res = client.audio.transcriptions.create(model="whisper-large-v3", file=f, temperature=0.0)
+            res = g_client.audio.transcriptions.create(model="whisper-large-v3", file=f, temperature=0.0)
         raw_text = getattr(res, "text", "").strip().replace('\n', ' ')
         raw_lang = getattr(res, "language", "en")[:2].lower()
+        if any(ord(c) > 127 for c in raw_text): raw_lang = "kn"
+        clean = normalize_transcript(raw_text, raw_lang)
         lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
-        lang = lang_map.get(raw_lang, "en")
-        clean = normalize_transcript(raw_text, lang)
-        print(f"[STT GROQ OK] {lang} | Len:{len(clean)}", flush=True)
-        return clean, lang
+        print(f"[STT GROQ OK] {raw_lang} → {lang_map.get(raw_lang,'kn')} | Len:{len(clean)}", flush=True)
+        return clean, lang_map.get(raw_lang, "en")
     except Exception as e:
-        print(f"[STT GROQ FAIL] {type(e).__name__}: {e}", flush=True)
+        print(f"[STT FINAL FAIL] {type(e).__name__}: {e}", flush=True)
         return "", "en"
 
 def extract_json(text: str) -> dict:

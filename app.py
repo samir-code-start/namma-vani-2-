@@ -101,45 +101,31 @@ elif st.session_state.stage == "verify":
     else:
         st.caption("🔇 TTS audio unavailable.")
 
-    YES_KEYWORDS = ["yes", "ಹೌದು", "correct", "ಸರಿ", "right", "yeah", "yep", "ಹಾ", "ಹಾಂ"]
-    NO_KEYWORDS = ["no", "ಇಲ್ಲ", "wrong", "ತಪ್ಪು", "nope", "ಬೇಡ"]
-
-    def parse_yes_no(text: str):
-        parsed = parse_confirmation(text)
-        if parsed is not None:
-            return parsed
-        text = text.lower().strip()
-        if any(kw in text for kw in YES_KEYWORDS):
-            return True
-        if any(kw in text for kw in NO_KEYWORDS):
-            return False
-        return None
-
-    user_resp = st.text_input("Type Yes or No", key="verify_input")
-    if user_resp:
-        is_yes = parse_yes_no(user_resp)
-        if is_yes is True:
-            st.session_state.stage = "handover" if data.get("handover", False) else "agent_ready"
+    conf_audio = st.audio_input("🎤 Speak Confirmation", key="conf_mic")
+    if conf_audio is not None:
+        with open("confirm.wav", "wb") as f: f.write(conf_audio.getvalue())
+        with st.spinner("🎙️ Listening..."):
+            _, _ = transcribe_audio("confirm.wav")
+            result = parse_confirmation(open("confirm.wav","r",encoding="utf-8").read() if os.path.exists("confirm.wav") else "")
+            # Fallback: transcribe real file for parsing
+            raw_conf, _ = transcribe_audio("confirm.wav")
+            parsed = parse_confirmation(raw_conf)
+            
+        st.session_state.attempts += 1
+        if parsed["intent"] == "confirmed":
+            st.session_state.stage = "agent_ready"
+            st.rerun()
+        elif parsed["intent"] == "denied":
+            if st.session_state.attempts >= 2 or st.session_state.ai_data.get("handover", False):
+                st.session_state.stage = "handover"
+            else:
+                st.warning("⚠️ Please speak clearly again.")
+                st.session_state.stage = "input_record"
             st.rerun()
         else:
-            st.session_state.stage = "decision"
-            st.rerun()
-
-    voice_resp = st.audio_input("Speak Yes or No", key="verify_voice_input")
-    if voice_resp is not None:
-        verify_path = "verify_response.wav"
-        with open(verify_path, "wb") as f:
-            f.write(voice_resp.getvalue())
-
-        with st.spinner("🔄 Verifying your response…"):
-            verify_text, _ = transcribe_audio(verify_path)
-            is_yes = parse_confirmation(verify_text)
-
-        if is_yes is True:
-            st.session_state.stage = "handover" if data.get("handover", False) else "agent_ready"
-            st.rerun()
-        else:
-            st.session_state.stage = "decision"
+            st.info(f"📝 AI heard: '{parsed['summary']}'")
+            st.warning("❓ Did you mean 'Yes' or 'No'?")
+            st.session_state.stage = "input_record"
             st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
