@@ -256,9 +256,19 @@ def transcribe_audio(audio_path: str) -> tuple[str, str]:
             res = requests.post("https://api.sarvam.ai/transcription/kannada-english-hindi/v1",
                                 files={"file": ("audio.wav", f, "audio/wav")},
                                 headers={"subscription-key": os.getenv("SARVAM_API_KEY")}, timeout=15)
+                                
+        if res.status_code != 200:
+            raise ValueError(f"Sarvam error: {res.text}")
+            
         res.raise_for_status()
         data = res.json().get("data") or res.json()
         raw_text = (data.get("text") or data.get("transcript") or "").strip()
+        
+        if len(raw_text) < 3:
+            raise ValueError("Transcript too short or empty")
+            
+        print(f"[DEBUG] SARVAM SUCCESS CHECK: Status={res.status_code}, Len={len(raw_text)}", flush=True)
+        
         raw_lang = (data.get("detected_language") or data.get("language") or "kn-IN").split("-")[0][:2]
         
         # Force correct language if Unicode Indic detected
@@ -270,7 +280,7 @@ def transcribe_audio(audio_path: str) -> tuple[str, str]:
         print(f"[STT SARVAM OK] {raw_lang} → {lang_map.get(raw_lang,'kn')} | Len:{len(clean)}", flush=True)
         return clean, lang_map.get(raw_lang, "kn")
     except Exception as e:
-        print(f"[STT SARVAM SKIP] {type(e).__name__}: {e}", flush=True)
+        print(f"[WARN] SARVAM SKIPPED: {e} -> Switching to Groq", flush=True)
         
     # ── LAYER 2: GROQ ──
     try:
