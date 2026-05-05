@@ -20,6 +20,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
+def translate_to_english(text: str) -> str:
+    """Translates any text to English via Groq. Safe fallback to original."""
+    if not text.strip(): return ""
+    try:
+        client = _get_groq_client()
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": f"Translate to English ONLY: '{text}'"}],
+            temperature=0.1, max_tokens=100
+        )
+        return res.choices[0].message.content.strip()
+    except Exception: return text # Fail-safe
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -368,10 +381,11 @@ def process_audio(audio_path: str) -> dict:
         })
         return {**fallback, "raw_text": "", "verify_tts_path": "verify.mp3"}
                 
-    ai_data = analyze_transcript(raw_text)
+    english_raw = translate_to_english(raw_text)
+    ai_data = analyze_transcript(english_raw)
     tts_path = generate_tts(ai_data.get("verification_prompt", ""), ai_data.get("language", "kn"))
     
-    final = {**ai_data, "raw_text": raw_text, "verify_tts_path": tts_path}
+    final = {**ai_data, "raw_text": english_raw, "verify_tts_path": tts_path}
     logging.info(f"[PIPELINE OK] Confidence: {final['confidence']}, Handover: {final['handover']}")
     return final
 
