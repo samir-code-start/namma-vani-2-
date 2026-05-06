@@ -11,7 +11,7 @@ import requests
 from datetime import datetime
 
 import edge_tts
-from groq import Groq
+from openai import OpenAI
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -21,26 +21,30 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 def translate_to_english(text: str) -> str:
-    """Translates any text to English via Groq. Safe fallback to original."""
+    """Translates any text to English via Sarvam LLM. Safe fallback to original."""
     if not text.strip(): return ""
     try:
-        client = _get_groq_client()
-        res = client.chat.completions.create(
+        res = sarvam_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": f"Translate to English ONLY: '{text}'"}],
             temperature=0.1, max_tokens=100
         )
         return res.choices[0].message.content.strip()
-    except Exception: return text # Fail-safe
+    except Exception: return text  # Fail-safe
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 MOCK_MODE: bool = os.getenv("MOCK_MODE", "False").lower() == "true"
-GROQ_API_KEY: str | None = os.getenv("GROQ_API_KEY")
 SARVAM_API_KEY: str | None = os.getenv("SARVAM_API_KEY")
 SARVAM_URL = "https://api.sarvam.ai/transcription/kannada-english-hindi/v1"
 LLM_MODEL = "llama-3.3-70b-versatile"
+
+# Sarvam Chat Client (OpenAI-compatible)
+sarvam_client = OpenAI(
+    api_key=os.getenv("SARVAM_API_KEY"),
+    base_url="https://api.sarvam.ai/inference/chat/completions",
+)
 
 KANADA_FIXES = {
     "ನಮ್ವ": "ನಮ್ಮ",
@@ -113,18 +117,8 @@ GUARDRAILS:
 - If sentiment in [distressed, angry] -> handover=true"""
 
 # ---------------------------------------------------------------------------
-# Groq client
+# Sarvam client (configured above at module level)
 # ---------------------------------------------------------------------------
-
-@st.cache_resource
-def _get_groq_client() -> Groq:
-    """Return a cached Groq client; raises RuntimeError if API key is missing."""
-    key = os.getenv("GROQ_API_KEY")
-    if not key:
-        raise RuntimeError("GROQ_API_KEY not set. Add it to .env or enable MOCK_MODE=True.")
-    client = Groq(api_key=key)
-    logger.info("Groq client initialised.")
-    return client
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -209,15 +203,15 @@ def parse_confirmation(transcript: str) -> dict:
     if len(t) > 20 or (len(yes_hits) > 0 and len(no_hits) > 0):
         # Longer/mixed input → route to quick LLM intent extraction
         try:
-            client = _get_groq_client()
             system = "You are a helpline assistant. Respond ONLY with JSON: {\"intent\":\"confirmed\"|\"denied\"|\"unclear\",\"summary\":\"one-line clarification of user's exact meaning\"}. Analyze this spoken reply:"
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile",
-                messages=[{"role":"system","content":system},{"role":"user","content":t}],
-                temperature=0.1, max_tokens=80)
-            import re, json
+            res = sarvam_client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": t}],
+                temperature=0.1, max_tokens=80,
+            )
             m = re.search(r'\{.*\}', res.choices[0].message.content, re.DOTALL)
             if m: return json.loads(m.group())
-        except: pass
+        except Exception: pass
         return {"intent": "unclear", "summary": t[:80]}
     return {"intent": "unclear", "summary": t[:80]}
 
@@ -241,62 +235,43 @@ def normalize_transcript(text: str, lang: str) -> str:
     return out.strip().replace("  ", " ").replace("\n", " ")
 
 def transcribe_audio(audio_path: str) -> tuple[str, str]:
-    """Layer 1: Sarvam → Layer 2: Groq. Forces Indic language routing."""
+    """Single-layer transcription using Sarvam Hindi/Kannada/English model."""
+    # Mock Mode Check
     if os.getenv("MOCK_MODE", "").lower() == "true":
         return normalize_transcript("ನಮ್ಮ ಊರಿ ರಸ್ತೆ ತುಂಬಾ ಕೆಟ್ಟಿದೆ, ಅಧಿಕಾರಿಗಳನ್ನು ಕಳುಹಿಸಿ", "kn"), "kn"
-    
-    print(f"[STT] Checking: {audio_path}", flush=True)
+
+    print(f"[STT] Transcribing via Sarvam: {audio_path}", flush=True)
     if not os.path.isfile(audio_path) or os.path.getsize(audio_path) < 50:
         return "", "en"
-        
-    # ── LAYER 1: SARVAM ──
+
     try:
-        import requests
         with open(audio_path, "rb") as f:
-            res = requests.post("https://api.sarvam.ai/transcription/kannada-english-hindi/v1",
-                                files={"file": ("audio.wav", f, "audio/wav")},
-                                headers={"subscription-key": os.getenv("SARVAM_API_KEY")}, timeout=15)
-                                
-        if res.status_code != 200:
-            raise ValueError(f"Sarvam error: {res.text}")
-            
+            # Sarvam's Indic model endpoint
+            res = requests.post(
+                SARVAM_URL,
+                files={"file": ("audio.wav", f, "audio/wav")},
+                headers={"subscription-key": os.getenv("SARVAM_API_KEY")},
+                timeout=15,
+            )
+
         res.raise_for_status()
         data = res.json().get("data") or res.json()
         raw_text = (data.get("text") or data.get("transcript") or "").strip()
-        
-        if len(raw_text) < 3:
-            raise ValueError("Transcript too short or empty")
-            
-        print(f"[DEBUG] SARVAM SUCCESS CHECK: Status={res.status_code}, Len={len(raw_text)}", flush=True)
-        
+
+        # Language Routing & Validation
         raw_lang = (data.get("detected_language") or data.get("language") or "kn-IN").split("-")[0][:2]
-        
-        # Force correct language if Unicode Indic detected
+        clean = normalize_transcript(raw_text, raw_lang)
+
+        # Force Kannada/Hindi routing if Unicode detected
         if any(ord(c) > 127 for c in raw_text):
             raw_lang = "kn" if any(chr(2400) <= ord(c) <= chr(2815) for c in raw_text) else "hi"
-            
-        clean = normalize_transcript(raw_text, raw_lang)
-        lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
-        print(f"[STT SARVAM OK] {raw_lang} → {lang_map.get(raw_lang,'kn')} | Len:{len(clean)}", flush=True)
-        return clean, lang_map.get(raw_lang, "kn")
+
+        print(f"[STT SARVAM SUCCESS] Lang: {raw_lang} | Len: {len(clean)}", flush=True)
+        return clean, raw_lang
+
     except Exception as e:
-        print(f"[WARN] SARVAM SKIPPED: {e} -> Switching to Groq", flush=True)
-        
-    # ── LAYER 2: GROQ ──
-    try:
-        g_client = _get_groq_client()
-        with open(audio_path, "rb") as f:
-            res = g_client.audio.transcriptions.create(model="whisper-large-v3", file=f, temperature=0.0)
-        raw_text = getattr(res, "text", "").strip().replace('\n', ' ')
-        raw_lang = getattr(res, "language", "en")[:2].lower()
-        if any(ord(c) > 127 for c in raw_text): raw_lang = "kn"
-        clean = normalize_transcript(raw_text, raw_lang)
-        lang_map = {"kn":"kn","hi":"hi","en":"en","ml":"kn","ta":"kn","te":"kn"}
-        print(f"[STT GROQ OK] {raw_lang} → {lang_map.get(raw_lang,'kn')} | Len:{len(clean)}", flush=True)
-        return clean, lang_map.get(raw_lang, "en")
-    except Exception as e:
-        print(f"[STT FINAL FAIL] {type(e).__name__}: {e}", flush=True)
-        return "", "en"
+        print(f"[STT ERROR] Sarvam Failed: {e}", flush=True)
+        return "", "en"  # Graceful failure to English if Sarvam is down
 
 def extract_json(text: str) -> dict:
     match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -306,22 +281,22 @@ def extract_json(text: str) -> dict:
     raise ValueError("No JSON object found in LLM response")
 
 def analyze_transcript(text: str) -> dict:
+    """Analyze citizen transcript via Sarvam LLM and return structured JSON."""
     if MOCK_MODE:
         return _MOCK_ANALYSIS
-    
+
     logging.info(f"[LLM INPUT] {text[:80]}{'...' if len(text)>80 else ''}")
-    
+
     try:
-        client = _get_groq_client()
-        res = client.chat.completions.create(
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": f"CITIZEN TRANSCRIPT: '{text}'"}
+        ]
+        res = sarvam_client.chat.completions.create(
             model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": f"CITIZEN TRANSCRIPT: '{text}'"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=250
+            messages=messages,
+            temperature=0.1,
+            max_tokens=500,
         )
         raw = res.choices[0].message.content.strip()
         clean_raw = _strip_fences(raw)
@@ -335,7 +310,7 @@ def analyze_transcript(text: str) -> dict:
             "confidence": 0.1,
             "sentiment": "confused",
             "verification_prompt": "I didn't catch that. Could you please say it again?",
-            "handover": True
+            "handover": True,
         })
 
 def generate_tts(text: str, lang: str) -> str:
