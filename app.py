@@ -194,10 +194,14 @@ if st.session_state.stage == "input_record":
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: verify
 # ═══════════════════════════════════════════════════════════════════════════
-<<<<<<< HEAD
-import time
-if st.session_state.stage == "verify":
+elif st.session_state.stage == "verify":
+    import time
     data = st.session_state.ai_data or {}
+    if not data:
+        st.error("No analysis data found. Returning to start.")
+        _reset()
+        st.rerun()
+
     lang = data.get("language", "en")
     tts_path = data.get("verify_tts_path", "")
     
@@ -209,25 +213,7 @@ if st.session_state.stage == "verify":
         
     elapsed_1 = time.time() - st.session_state._ver_start
     
-    # Play AI verification summary
-    st.markdown(f"**AI Summary:** {data.get('normalized_issue', '—')}")
-    st.caption(f"🌐 `{lang.upper()}` | 📊 `{data.get('confidence', 0):.0%}`")
-    if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
-    
-    # PHASE 0: Single-click mic initialization (browser security requirement)
-    if not st.session_state._mic_initialized:
-        st.warning("⚠️ Click ONCE to activate live microphone. Keep device close.")
-        if st.button("🎤 Activate Live Microphone", key="btn_init_mic", type="primary"):
-            st.session_state._mic_initialized = True
-            st.rerun()
-=======
-elif st.session_state.stage == "verify":
-    data = st.session_state.ai_data
-    if data is None:
-        st.error("No analysis data found. Returning to start.")
-        _reset()
-        st.rerun()
-
+    # --- UI Start ---
     st.markdown("<h2 class='branded-subheader'>🔍 Verification</h2>", unsafe_allow_html=True)
 
     col1, col2 = st.columns([1, 3])
@@ -235,7 +221,7 @@ elif st.session_state.stage == "verify":
         st.markdown(f"""
             <div class='info-card'>
                 <h4>Analysis</h4>
-                <div style='margin-bottom: 0.8rem;'>{get_language_pill(data.get("language", "—"))}</div>
+                <div style='margin-bottom: 0.8rem;'>{get_language_pill(lang)}</div>
                 <div style='margin-bottom: 0.8rem;'>{get_confidence_pill(data.get('confidence', 0))}</div>
                 <div>{get_sentiment_pill(data.get("sentiment", "calm"))}</div>
             </div>
@@ -259,10 +245,19 @@ elif st.session_state.stage == "verify":
     """, unsafe_allow_html=True)
 
     # Auto-play TTS
-    tts_path = data.get("verify_tts_path", "verify.mp3")
     if os.path.isfile(tts_path) and os.path.getsize(tts_path) > 0:
         st.audio(tts_path, autoplay=True, format="audio/mpeg")
->>>>>>> f454089 (Refactor UI/UX: Modern SaaS dashboard style)
+    else:
+        st.caption("🔇 TTS audio unavailable.")
+        
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # PHASE 0: Single-click mic initialization (browser security requirement)
+    if not st.session_state._mic_initialized:
+        st.warning("⚠️ Click ONCE to activate live microphone. Keep device close.")
+        if st.button("🎤 Activate Live Microphone", key="btn_init_mic", type="primary"):
+            st.session_state._mic_initialized = True
+            st.rerun()
     else:
         # PHASE 1: Initial 10-second auto-listening window
         if st.session_state._ver_phase == 0:
@@ -289,7 +284,7 @@ elif st.session_state.stage == "verify":
                         st.session_state.stage = "input_record"
                     st.rerun()
                 else:
-                    st.info(f"📝 AI heard: '{parsed['summary']}'")
+                    st.markdown(f"<div class='info-card' style='border-left: 4px solid var(--warning-orange);'>📝 <strong>AI heard:</strong> '{parsed['summary']}'</div>", unsafe_allow_html=True)
                     st.warning("❓ Did you mean Yes or No?")
                     st.session_state.stage = "input_record"
                     st.rerun()
@@ -325,28 +320,19 @@ elif st.session_state.stage == "verify":
                         st.session_state.stage = "handover"
                         st.error("🔄 Handover triggered.")
                     else:
+                        st.warning("⚠️ Please speak clearly again.")
                         st.session_state.stage = "input_record"
                     st.rerun()
                 else:
+                    st.markdown(f"<div class='info-card' style='border-left: 4px solid var(--warning-orange);'>📝 <strong>AI heard:</strong> '{parsed['summary']}'</div>", unsafe_allow_html=True)
+                    st.warning("❓ Did you mean 'Yes' or 'No'?")
                     st.session_state.stage = "input_record"
                     st.rerun()
                     
             if elapsed_2 >= 3:
                 st.warning("⏰ No further response detected. Transferring to human agent with available context...")
                 st.session_state.stage = "handover"
-<<<<<<< HEAD
                 st.rerun()
-=======
-            else:
-                st.warning("⚠️ Please speak clearly again.")
-                st.session_state.stage = "input_record"
-            st.rerun()
-        else:
-            st.markdown(f"<div class='info-card' style='border-left: 4px solid var(--warning-orange);'>📝 <strong>AI heard:</strong> '{parsed['summary']}'</div>", unsafe_allow_html=True)
-            st.warning("❓ Did you mean 'Yes' or 'No'?")
-            st.session_state.stage = "input_record"
-            st.rerun()
->>>>>>> f454089 (Refactor UI/UX: Modern SaaS dashboard style)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: decision (transient — routes immediately)
