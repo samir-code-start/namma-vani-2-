@@ -216,11 +216,31 @@ elif st.session_state.stage == "verify":
         <div><span class="section-label">AI Voice Prompt</span><p style="margin:0;font-style:italic;color:var(--text-secondary) !important;line-height:1.5;">"{appended_prompt}"</p></div>
     </div>''', unsafe_allow_html=True)
 
-    # Auto-play TTS
-    if os.path.isfile(tts_path) and os.path.getsize(tts_path) > 0:
-        st.audio(tts_path, autoplay=True, format="audio/mpeg")
-    else:
-        st.caption("🔇 TTS audio unavailable.")
+    # Create a single placeholder for the audio player (prevents duplicates)
+    audio_placeholder = st.empty()
+
+    def play_verification_audio():
+        path = data.get("verify_tts_path", "")
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            with audio_placeholder.container():
+                st.info("🔊 Tap play to listen to verification.")
+                st.audio(path, key="ver_tts_player_unique")
+        else:
+            with audio_placeholder.container():
+                st.caption("🔇 TTS audio unavailable.")
+
+    # Play initial summary audio once
+    if "_verified_initial_play" not in st.session_state:
+        play_verification_audio()
+        st.session_state._verified_initial_play = True
+    elif st.session_state._ver_phase == 1:
+        # Replay phase — overwrite the same container
+        with audio_placeholder.container():
+            st.info("🔊 Replaying: Do I understand your problem? Reply now.")
+            if os.path.isfile(tts_path):
+                st.audio(tts_path, key="replay_tts_player_unique")
+            else:
+                st.warning("⚠️ No further voice prompt available.")
 
     # PHASE 0: Single-click mic initialization (browser security requirement)
     if not st.session_state._mic_initialized:
@@ -263,12 +283,10 @@ elif st.session_state.stage == "verify":
                 st.session_state._ver_phase = 1
                 st.rerun()
 
-        # PHASE 2: Auto-Replay TTS + Final 3-Second Safety Window
+        # PHASE 2: Final Response Window
         elif st.session_state._ver_phase == 1:
             if "_rep_start" not in st.session_state:
                 st.session_state._rep_start = time.time()
-                st.info("🔊 Replay: Do I understand your problem? Reply now.")
-                if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
 
             elapsed_2 = time.time() - st.session_state._rep_start
             st.caption(f"⏳ Final response window: {max(0, int(3 - elapsed_2))}s")
