@@ -406,8 +406,13 @@ elif st.session_state.stage == "handover":
         </div>
     </div>''', unsafe_allow_html=True)
 
-    with st.expander("📝 Raw Transcript"):
-        st.code(data.get("raw_text", "—"), language=None)
+    raw_text = data.get("raw_text", "No transcript available.")
+    st.markdown(f'''<div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 20px; margin-bottom: 16px;">
+        <span class="section-label">📄 Raw Transcript</span>
+        <p style="font-family: 'Space Mono', monospace; font-size: 13px; line-height: 1.6; color: var(--text-secondary) !important; margin-top: 12px; white-space: pre-wrap; word-break: break-word; max-height: 150px; overflow-y: auto;">
+            {raw_text}
+        </p>
+    </div>''', unsafe_allow_html=True)
 
     if st.button("🔄 End Call", use_container_width=True):
         feedback = dict(data)
