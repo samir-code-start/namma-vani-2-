@@ -114,6 +114,27 @@ def _lang_pill(lang):
 def _render_header():
     st.markdown('''<div class="nav-bar"><div class="nav-brand-group"><div style="display:flex;align-items:center;gap:12px;"><div class="nav-icon-bg">📞</div><h1 style="margin:0;font-family:'Syne',sans-serif;font-weight:800;font-size:18px;color:var(--text-primary);line-height:1.2;">Namma Vanni — <span style="color:var(--accent-red)">1092</span> AI Helpline</h1></div><p style="margin:6px 0 0 50px;font-size:12px;color:var(--text-secondary);letter-spacing:0.3px;">Voice-to-voice citizen assistant for Karnataka</p></div><div class="nav-badge">LIVE</div></div>''', unsafe_allow_html=True)
 
+def parse_smart_confirmation(transcript: str) -> dict:
+    """Handles conversational Yes/No (e.g., 'Yes you are correct')."""
+    t = transcript.strip().lower()
+
+    pos_cluster = ["yes", "yeah", "yep", "correct", "right", "okay", "ok", "haan", "hān", "sari", "sha"]
+    neg_cluster = ["no", "nahi", "galat", "wrong", "naahi", "illa", "thappilla", "kadliya"]
+
+    pos_hits = [w for w in pos_cluster if w in t]
+    neg_hits = [w for w in neg_cluster if w in t]
+
+    if len(pos_hits) >= 1 and len(neg_hits) == 0: return {"intent": "confirmed"}
+    if len(neg_hits) >= 1 and len(pos_hits) == 0: return {"intent": "denied"}
+
+    positive_phrases = ["sounds right", "did i understand correctly", "that is correct", "you got it", "exactly", "bilkul sahi"]
+    negative_phrases = ["not exactly", "wrong", "missed", "try again", "not what i said"]
+
+    if any(p in t for p in positive_phrases): return {"intent": "confirmed"}
+    if any(p in t for p in negative_phrases): return {"intent": "denied"}
+
+    return {"intent": "unclear"}
+
 # ---------------------------------------------------------------------------
 # Session state defaults
 # ---------------------------------------------------------------------------
@@ -208,49 +229,37 @@ elif st.session_state.stage == "verify":
         <div><span class="section-label">AI Voice Prompt</span><p style="margin:0;font-style:italic;color:var(--text-secondary) !important;line-height:1.5;">"{appended_prompt}"</p></div>
     </div>''', unsafe_allow_html=True)
 
-    # --- PLAYBACK LOGIC (Prevents Double Recording Bug) ---
-    if "_show_replay" not in st.session_state:
-        st.session_state._show_replay = False
-
-    if st.session_state._show_replay:
-        st.warning("⚠️ No response detected. Playing summary again...")
-        if os.path.isfile(tts_path):
-            st.audio(tts_path, key="replay_player_101")
-        st.info("🔊 Please say 'Yes' or 'No' clearly.")
+    # --- PLAYBACK (no key= args to prevent TypeError) ---
+    if not tts_path or not os.path.isfile(tts_path):
+        st.error("Voice summary missing.")
     else:
-        if os.path.isfile(tts_path):
-            st.info("👇 Tap play below to listen to my understanding:")
-            st.audio(tts_path, key="initial_player_100")
-        st.info("🎤 Record your reply now: Yes, No, or explain your issue.")
+        st.info("👇 Listen to the AI summary:")
+        st.audio(tts_path)
 
-    # --- MANUAL RECORDING INPUT (Simplified) ---
-    conf_audio = st.audio_input("🎙️ Speak Your Reply", key="main_rec_mic")
-
+    # --- RECORDING ---
+    conf_audio = st.audio_input("🎙️ Say 'Yes' or 'No'...", key="final_mic_ver")
     if conf_audio is not None:
         with open("confirm.wav", "wb") as f:
             f.write(conf_audio.getvalue())
 
-        with st.spinner("Processing voice..."):
+        with st.spinner("Processing..."):
             raw_text, _ = transcribe_audio("confirm.wav")
-            parsed = parse_confirmation(raw_text)
+            result = parse_smart_confirmation(raw_text)
             st.session_state.attempts += 1
 
-            if parsed["intent"] == "confirmed":
+            if result["intent"] == "confirmed":
                 st.session_state.stage = "agent_ready"
                 st.rerun()
-
-            elif parsed["intent"] == "denied":
+            elif result["intent"] == "denied":
                 if st.session_state.attempts >= 2 or data.get("handover", False):
                     st.session_state.stage = "handover"
                     st.rerun()
                 else:
-                    st.session_state._show_replay = True
                     st.warning("Not understood. Please try again.")
                     st.rerun()
-
             else:
-                st.markdown(f'''<div class="card" style="border-left:3px solid var(--accent-yellow);"><span class="section-label">AI heard</span><p style="color:var(--text-secondary) !important;margin:0;">"{parsed['summary']}"</p></div>''', unsafe_allow_html=True)
-                st.warning("❓ Did you mean Yes or No? Try again.")
+                st.markdown(f'''<div class="card" style="border-left:3px solid var(--accent-yellow);"><span class="section-label">AI heard</span><p style="color:var(--text-secondary) !important;margin:0;">"{raw_text[:50]}"</p></div>''', unsafe_allow_html=True)
+                st.warning("Please answer Yes or No clearly.")
                 st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
