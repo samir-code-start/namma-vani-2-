@@ -37,8 +37,8 @@ h1, h2, h3, h4, label, p, span, li { font-family: 'Syne', sans-serif !important;
 .font-mono { font-family: 'Space Mono', monospace !important; letter-spacing: -0.5px; }
 
 /* Nav Bar */
-.nav-bar { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border-subtle); margin-bottom:24px; }
-.nav-brand { display:flex; align-items:center; gap:12px; font-weight:800; font-size:18px; color:var(--text-primary); font-family:'Syne'; }
+.nav-bar { display:flex; justify-content:space-between; align-items:center; padding:16px 0; border-bottom:1px solid var(--border-subtle); margin-bottom:24px; margin-top:8px; }
+.nav-brand-group { display:flex; flex-direction:column; }
 .nav-icon-bg { width:38px; height:38px; background:linear-gradient(135deg,#e8445a,#ff7b54); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; }
 .nav-badge { background:rgba(232,68,90,0.15); color:var(--accent-red); border:1px solid rgba(232,68,90,0.3); font-size:11px; font-family:'Space Mono'; padding:4px 10px; border-radius:6px; text-transform:uppercase; letter-spacing:1px; }
 
@@ -112,7 +112,7 @@ def _lang_pill(lang):
     return f"<span class='pill lang-pill'>{lang.upper()}</span>"
 
 def _render_header():
-    st.markdown('''<div class="nav-bar"><div class="nav-brand"><div class="nav-icon-bg">📞</div><span>Namma Vanni — <span style="color:var(--accent-red)">1092</span> AI Helpline</span></div><div class="nav-badge">LIVE</div></div>''', unsafe_allow_html=True)
+    st.markdown('''<div class="nav-bar"><div class="nav-brand-group"><div style="display:flex;align-items:center;gap:12px;"><div class="nav-icon-bg">📞</div><h1 style="margin:0;font-family:'Syne',sans-serif;font-weight:800;font-size:18px;color:var(--text-primary);line-height:1.2;">Namma Vanni — <span style="color:var(--accent-red)">1092</span> AI Helpline</h1></div><p style="margin:6px 0 0 50px;font-size:12px;color:var(--text-secondary);letter-spacing:0.3px;">Voice-to-voice citizen assistant for Karnataka</p></div><div class="nav-badge">LIVE</div></div>''', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Session state defaults
