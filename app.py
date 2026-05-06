@@ -1,5 +1,3 @@
-"""app.py — Namma Vanni Streamlit UI: Record → Verify → Confirm/Handover → Agent Dashboard."""
-
 import os
 import pandas as pd
 import streamlit as st
@@ -18,6 +16,111 @@ from engine import (
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Namma Vanni — 1092 AI Helpline", page_icon="📞", layout="wide")
 
+# ---------------------------------------------------------------------------
+# Global Theme Injection
+# ---------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+    :root {
+        --primary-blue: #0d6efd;
+        --success-green: #198754;
+        --warning-orange: #fd7e14;
+        --danger-red: #dc3545;
+    }
+
+    /* Clean background & Typography */
+    [data-testid="stAppViewContainer"] {
+        background-color: #f0f2f6;
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Spacing: Increased padding on the main container */
+    .block-container {
+        padding-top: 3rem !important;
+        padding-bottom: 3rem !important;
+        padding-left: 5rem !important;
+        padding-right: 5rem !important;
+    }
+
+    /* Card-like elements */
+    .info-card {
+        background-color: #ffffff;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+        color: #374151;
+    }
+    
+    .info-card h4 {
+        margin-top: 0;
+        margin-bottom: 1rem;
+        color: #1f2937;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    /* Status Pills */
+    .pill {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    .pill-calm { background-color: #e8f5e9; color: var(--success-green); border: 1px solid #c8e6c9; }
+    .pill-confused { background-color: #fff3e0; color: var(--warning-orange); border: 1px solid #ffe0b2; }
+    .pill-urgent { background-color: #ffebee; color: var(--danger-red); border: 1px solid #ffcdd2; }
+    .pill-distressed { background-color: #dc3545; color: #ffffff; border: 1px solid #b02a37; }
+    .pill-angry { background-color: #8b0000; color: #ffffff; border: 1px solid #600000; }
+    
+    .pill-confidence { background-color: #e3f2fd; color: var(--primary-blue); border: 1px solid #bbdefb; }
+    .pill-language { background-color: #f3e5f5; color: #8e24aa; border: 1px solid #e1bee7; }
+
+    /* Buttons */
+    .stButton > button {
+        width: 100% !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    /* Headers Overlay */
+    h1.branded-header {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        color: #1f2937;
+        border-bottom: 3px solid var(--primary-blue);
+        padding-bottom: 0.5rem;
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+    
+    h2.branded-subheader {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        color: #374151;
+        border-bottom: 2px solid #e5e7eb;
+        padding-bottom: 0.3rem;
+        margin-bottom: 1.5rem;
+        margin-top: 2rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 SENTIMENT_BADGES = {
     "calm": "🟢 Calm",
     "confused": "🟡 Confused",
@@ -25,6 +128,24 @@ SENTIMENT_BADGES = {
     "distressed": "🔴 Distressed",
     "angry": "🟥 Angry",
 }
+
+def get_sentiment_pill(sentiment):
+    classes = {
+        "calm": "pill-calm",
+        "confused": "pill-confused",
+        "urgent": "pill-urgent",
+        "distressed": "pill-distressed",
+        "angry": "pill-angry"
+    }
+    css_class = classes.get(sentiment, "pill-calm")
+    label = SENTIMENT_BADGES.get(sentiment, sentiment)
+    return f"<span class='pill {css_class}'>{label}</span>"
+
+def get_confidence_pill(conf):
+    return f"<span class='pill pill-confidence'>{conf * 100:.0f}%</span>"
+
+def get_language_pill(lang):
+    return f"<span class='pill pill-language'>{lang.upper()}</span>"
 
 # ---------------------------------------------------------------------------
 # Session state defaults
@@ -43,8 +164,8 @@ def _reset():
 # Header
 # ---------------------------------------------------------------------------
 st.markdown(
-    "<h1 style='text-align:center'>📞 Namma Vanni — 1092 AI Helpline</h1>"
-    "<p style='text-align:center;opacity:0.6'>Voice-to-voice citizen assistant for Karnataka</p>",
+    "<h1 class='branded-header'>📞 Namma Vanni — 1092 AI Helpline</h1>"
+    "<p style='text-align:center;opacity:0.6;font-family:Inter,sans-serif;margin-top:-1rem;margin-bottom:2rem;'>Voice-to-voice citizen assistant for Karnataka</p>",
     unsafe_allow_html=True,
 )
 if MOCK_MODE:
@@ -54,7 +175,7 @@ if MOCK_MODE:
 # STAGE: input_record
 # ═══════════════════════════════════════════════════════════════════════════
 if st.session_state.stage == "input_record":
-    st.subheader("🎤 Start Call")
+    st.markdown("<h2 class='branded-subheader'>🎤 Start Call</h2>", unsafe_allow_html=True)
     audio_bytes = st.audio_input("Speak your concern or upload audio")
 
     if audio_bytes is not None:
@@ -73,6 +194,7 @@ if st.session_state.stage == "input_record":
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: verify
 # ═══════════════════════════════════════════════════════════════════════════
+<<<<<<< HEAD
 import time
 if st.session_state.stage == "verify":
     data = st.session_state.ai_data or {}
@@ -98,6 +220,49 @@ if st.session_state.stage == "verify":
         if st.button("🎤 Activate Live Microphone", key="btn_init_mic", type="primary"):
             st.session_state._mic_initialized = True
             st.rerun()
+=======
+elif st.session_state.stage == "verify":
+    data = st.session_state.ai_data
+    if data is None:
+        st.error("No analysis data found. Returning to start.")
+        _reset()
+        st.rerun()
+
+    st.markdown("<h2 class='branded-subheader'>🔍 Verification</h2>", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.markdown(f"""
+            <div class='info-card'>
+                <h4>Analysis</h4>
+                <div style='margin-bottom: 0.8rem;'>{get_language_pill(data.get("language", "—"))}</div>
+                <div style='margin-bottom: 0.8rem;'>{get_confidence_pill(data.get('confidence', 0))}</div>
+                <div>{get_sentiment_pill(data.get("sentiment", "calm"))}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+            <div class='info-card'>
+                <h4>AI Summary</h4>
+                <p style='font-size: 1.1rem; margin-bottom: 0;'>{data.get('normalized_issue', '—')}</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+    base_prompt = data.get("verification_prompt", "")
+    normalized_issue = data.get("normalized_issue", "")
+    appended_prompt = f"{base_prompt} I heard you say '{normalized_issue}'. Is this correct? Say Yes or No."
+    
+    st.markdown(f"""
+        <div class='info-card' style='background-color: #f8f9fa; border-left: 4px solid var(--primary-blue);'>
+            <strong>🗣️ AI Voice Prompt:</strong> <em>"{appended_prompt}"</em>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Auto-play TTS
+    tts_path = data.get("verify_tts_path", "verify.mp3")
+    if os.path.isfile(tts_path) and os.path.getsize(tts_path) > 0:
+        st.audio(tts_path, autoplay=True, format="audio/mpeg")
+>>>>>>> f454089 (Refactor UI/UX: Modern SaaS dashboard style)
     else:
         # PHASE 1: Initial 10-second auto-listening window
         if st.session_state._ver_phase == 0:
@@ -169,7 +334,19 @@ if st.session_state.stage == "verify":
             if elapsed_2 >= 3:
                 st.warning("⏰ No further response detected. Transferring to human agent with available context...")
                 st.session_state.stage = "handover"
+<<<<<<< HEAD
                 st.rerun()
+=======
+            else:
+                st.warning("⚠️ Please speak clearly again.")
+                st.session_state.stage = "input_record"
+            st.rerun()
+        else:
+            st.markdown(f"<div class='info-card' style='border-left: 4px solid var(--warning-orange);'>📝 <strong>AI heard:</strong> '{parsed['summary']}'</div>", unsafe_allow_html=True)
+            st.warning("❓ Did you mean 'Yes' or 'No'?")
+            st.session_state.stage = "input_record"
+            st.rerun()
+>>>>>>> f454089 (Refactor UI/UX: Modern SaaS dashboard style)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE: decision (transient — routes immediately)
@@ -190,19 +367,35 @@ elif st.session_state.stage == "decision":
 # ═══════════════════════════════════════════════════════════════════════════
 elif st.session_state.stage == "agent_ready":
     data = st.session_state.ai_data or {}
-    st.subheader("✅ Agent Dashboard — Verified Issue")
+    st.markdown("<h2 class='branded-subheader'>✅ Agent Dashboard — Verified Issue</h2>", unsafe_allow_html=True)
 
     sentiment = data.get("sentiment", "calm")
-    st.success(
-        f"**Issue:** {data.get('normalized_issue', '—')}  \n"
-        f"**Sentiment:** {SENTIMENT_BADGES.get(sentiment, sentiment)} &nbsp;|&nbsp; "
-        f"**Confidence:** {data.get('confidence', 0) * 100:.0f}% &nbsp;|&nbsp; "
-        f"**Language:** {data.get('language', '—').upper()}"
-    )
+    conf = data.get("confidence", 0)
+    lang = data.get("language", "—")
+    issue = data.get('normalized_issue', '—')
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.markdown(f"""
+            <div class='info-card' style='height: 100%;'>
+                <h4>Metadata</h4>
+                <div style='margin-bottom: 0.8rem;'>{get_sentiment_pill(sentiment)}</div>
+                <div style='margin-bottom: 0.8rem;'>{get_confidence_pill(conf)}</div>
+                <div>{get_language_pill(lang)}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+            <div class='info-card' style='height: 100%; border-left: 4px solid var(--success-green);'>
+                <h4>Verified Issue</h4>
+                <p style='font-size: 1.1rem; color: #1f2937; margin-bottom: 0;'>{issue}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
     with st.expander("📝 Raw Transcript", expanded=False):
         st.code(data.get("raw_text", "—"), language=None)
 
+    st.markdown("<br>", unsafe_allow_html=True)
     agent_note = st.text_area(
         "Agent Notes / Corrections",
         value=data.get("normalized_issue", ""),
@@ -218,8 +411,7 @@ elif st.session_state.stage == "agent_ready":
         _reset()
         st.rerun()
 
-    st.divider()
-    st.subheader("📊 Feedback Log")
+    st.markdown("<h2 class='branded-subheader'>📊 Feedback Log</h2>", unsafe_allow_html=True)
     if os.path.isfile(FEEDBACK_FILE):
         try:
             df = pd.read_csv(FEEDBACK_FILE)
@@ -235,18 +427,33 @@ elif st.session_state.stage == "agent_ready":
 elif st.session_state.stage == "handover":
     data = st.session_state.ai_data or {}
 
-    st.error("⚠️ **HUMAN AGENT TAKING OVER**")
-    st.markdown(
-        "The AI could not confidently verify the caller's issue.  \n"
-        "A human agent will now handle this call directly.  \n\n"
-        f"**Last AI Summary:** {data.get('normalized_issue', '—')}  \n"
-        f"**Sentiment:** {SENTIMENT_BADGES.get(data.get('sentiment', ''), '—')}  \n"
-        f"**Confidence:** {data.get('confidence', 0) * 100:.0f}%"
-    )
+    st.markdown("<h2 class='branded-subheader' style='border-bottom-color: var(--danger-red); color: var(--danger-red);'>⚠️ HUMAN AGENT TAKING OVER</h2>", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.markdown(f"""
+            <div class='info-card'>
+                <h4>Metadata</h4>
+                <div style='margin-bottom: 0.8rem;'>{get_sentiment_pill(data.get("sentiment", "calm"))}</div>
+                <div>{get_confidence_pill(data.get('confidence', 0))}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+            <div class='info-card' style='border-left: 4px solid var(--danger-red);'>
+                <p style='color: var(--danger-red); font-weight: 600; margin-bottom: 1rem;'>
+                    The AI could not confidently verify the caller's issue.<br>
+                    A human agent will now handle this call directly.
+                </p>
+                <h4>Last AI Summary</h4>
+                <p style='font-size: 1.1rem; margin-bottom: 0;'>{data.get('normalized_issue', '—')}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
     with st.expander("📝 Raw Transcript"):
         st.code(data.get("raw_text", "—"), language=None)
 
+    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔄 End Call", use_container_width=True):
         feedback = dict(data)
         feedback["citizen_response"] = "Handover"
