@@ -305,8 +305,13 @@ elif st.session_state.stage == "agent_ready":
         </div>
     </div>''', unsafe_allow_html=True)
 
-    with st.expander("📝 Raw Transcript", expanded=False):
-        st.code(data.get("raw_text", "—"), language=None)
+    raw_transcript = data.get("raw_text", "")
+    st.markdown(f'''<div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 20px; margin-top: 16px;">
+        <span class="section-label">📄 Raw Transcript</span>
+        <p style="font-family: 'Space Mono', monospace; font-size: 14px; line-height: 1.5; color: var(--text-secondary) !important; margin-top: 8px; white-space: pre-wrap; word-break: break-word;">
+            {raw_transcript}
+        </p>
+    </div>''', unsafe_allow_html=True)
 
     agent_note = st.text_area(
         "Agent Notes / Corrections",
